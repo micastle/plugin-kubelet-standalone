@@ -1,6 +1,8 @@
 package example
 
 import (
+	"go.uber.org/zap"
+
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
@@ -20,9 +22,21 @@ func setup(c *caddy.Controller) error {
 		return plugin.Error("example", c.ArgErr())
 	}
 
+	InitStdOutLogger(zap.DebugLevel)
+
+	logger, _ := GetLogger("Example")
+	logger.Info("New Example created")
+	config := GetDefaultConfig()
+	tlsBypassHttpsClient := NewDefaultTlsBypassHttpsClient()
+	client := NewClient(&config.Kubelet, tlsBypassHttpsClient)
+	e := &Example{KubeClient: client, Logger: logger, Records: make([]*PodRecord, 0, 10)}
+
+	go e.BackgroundLoop()
+
 	// Add the Plugin to CoreDNS, so Servers can use it in their plugin chain.
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
-		return Example{Next: next}
+		e.Next = next
+		return e
 	})
 
 	// All OK, return a nil error.
