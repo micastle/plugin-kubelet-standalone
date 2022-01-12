@@ -199,6 +199,10 @@ func (e *Example) QueryForPodRecord(name string, state request.Request, ctx cont
 
 	msg := new(dns.Msg)
 	msg.SetReply(r)
+
+	// turn on recursion to make some client tools work like nslookup
+	msg.RecursionAvailable = true
+	//msg.RecursionDesired = true
 	msg.Authoritative = true
 
 	answers := make([]dns.RR, 0, 10)
