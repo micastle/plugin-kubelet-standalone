@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +63,21 @@ type PodRecord struct {
 	Port int32
 }
 
+func (e *Example) GetEnvConfig(envVar string, default_val int) (int, error) {
+	valueStr, ok := os.LookupEnv(envVar)
+	if !ok {
+		return default_val, nil
+	}
+
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		e.Logger.Warnw("configured environment variable value is not integer, take default value", "EnvVar", envVar, "Error", err)
+		return default_val, err
+	}
+
+	return value, nil
+}
+
 func (e *Example) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 	return e.ServeDNS_WhoAmI(ctx, w, r)
 	// return e.ServeDNS_Example(ctx, w, r)
@@ -98,6 +115,7 @@ func (e *Example) UpdateRecords(records []*PodRecord) {
 	e.Records = records
 }
 func (e *Example) BackgroundLoop() {
+	seconds, _ := e.GetEnvConfig("KUBELET_STATUS_SYNC_INTERVAL", 10)
 	for {
 		// get pod info
 		pods, err := e.KubeClient.GetPodsInfo()
@@ -108,7 +126,7 @@ func (e *Example) BackgroundLoop() {
 			e.UpdateRecords(records)
 		}
 
-		time.Sleep(10 * time.Second)
+		time.Sleep(time.Duration(seconds) * time.Second)
 	}
 
 }
@@ -133,21 +151,6 @@ func (e *Example) GetUserPodRecords(pods []v1.Pod) []*PodRecord {
 	return records
 }
 
-func (e *Example) GetPods() (int, error) {
-	records := e.GetRecords()
-	e.printRecords(records)
-
-	// get pod info
-	pods, err := e.KubeClient.GetPodsInfo()
-	if err != nil {
-		e.Logger.Warnw("Getting pods info failed!", "Error", err)
-		return dns.RcodeServerFailure, err
-	}
-
-	e.printPods(pods)
-
-	return dns.RcodeSuccess, nil
-}
 func (e *Example) printRecords(records []*PodRecord) {
 	for idx := range records {
 		e.Logger.Infow("Record Info", "Name", records[idx].Name, "IP", records[idx].Ip, "port", records[idx].Port)
@@ -169,33 +172,14 @@ func (e *Example) printPods(pods []v1.Pod) {
 			e.Logger.Infow("Pod Info", "Info", pods[idx])
 			e.Logger.Infow("Pod Info", "Name", name, "IP", ip, "port", port)
 		}
-
-		// if pods[idx].Labels[esm.config.PodSpecSetting.CustomerPodKey] == esm.config.PodSpecSetting.CustomerPodValue {
-		// 	ip := pods[idx].Status.PodIP
-		// 	// TODO: how to handle multi container port scenario
-		// 	port := pods[idx].Spec.Containers[0].Ports[0].ContainerPort
-		// 	routeModel := &xds.RouteModel{
-		// 		PathPrefix:      "/",
-		// 		Hosts:           map[string]uint32{ip: uint32(port)},
-		// 		FailfastSetting: esm.envoyFailFastSetting,
-		// 	}
-		// 	if esm.disableMesh {
-		// 		routeModel.TimeoutMillisecond = esm.modelRequestTimeout
-		// 	}
-		// 	if drainingCustomerContainer {
-		// 		isHealthy := false
-		// 		routeModel.IsHealthy = &isHealthy
-		// 	}
-		// 	routeModels = append(routeModels, routeModel)
-		// 	esm.logger.Infow("Route request path / to first pod/container", "ip", ip, "port", port)
-		// 	break
-		// }
 	}
 }
 
 func (e *Example) QueryForPodRecord(name string, state request.Request, ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 
 	e.Logger.Infow("QueryForPodRecord", "query for name", name)
+
+	ttl, _ := e.GetEnvConfig("LOCAL_CLUSTER_DNS_RECORD_TTL", 30)
 
 	msg := new(dns.Msg)
 	msg.SetReply(r)
@@ -215,7 +199,7 @@ func (e *Example) QueryForPodRecord(name string, state request.Request, ctx cont
 			var ra dns.RR
 			ra = new(dns.A)
 
-			ra.(*dns.A).Hdr = dns.RR_Header{Name: state.QName(), Rrtype: dns.TypeA, Class: state.QClass()}
+			ra.(*dns.A).Hdr = dns.RR_Header{Name: state.QName(), Rrtype: dns.TypeA, Class: state.QClass(), Ttl: uint32(ttl)}
 			ra.(*dns.A).A = net.ParseIP(rc.Ip).To4()
 
 			answers = append(answers, ra)
